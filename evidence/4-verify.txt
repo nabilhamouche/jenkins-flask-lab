@@ -1,0 +1,2 @@
+﻿{"status":"ok"}
+<h1>Jenkins CI/CD Lab</h1><p>Version: 1</p>

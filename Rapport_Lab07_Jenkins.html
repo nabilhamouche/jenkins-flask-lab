@@ -1,0 +1,106 @@
+﻿<html><head><meta charset="utf-8"><style>
+body{font-family:Calibri;font-size:11pt} h1{color:#1f4e79;font-size:20pt} h2{color:#1f4e79;font-size:14pt}
+pre{background:#f2f2f2;font-family:Consolas;font-size:8pt;padding:6px} td,th{border:1px solid #999;padding:4px;font-size:10pt} table{border-collapse:collapse}
+.ph{border:2px dashed #c00;padding:30px;text-align:center;color:#c00}
+</style></head><body>
+<h1>Lab No. 07 - CI/CD Pipeline with Jenkins and Docker</h1>
+<p>DevOps &amp; Cloud Computing - 5th-year Software Engineering<br>Student: ____________________ &nbsp; Date: 24/11/2026<br>
+GitHub repository: <b>https://github.com/USERNAME/jenkins-flask-lab</b> (replace USERNAME)</p>
+
+<h2>1. Introduction</h2>
+<p>The goal of this lab is to automate the build, test and deployment of a small Flask application using Jenkins, Docker and GitHub. The code and the Jenkinsfile live in GitHub; Jenkins reads the Jenkinsfile, builds a Docker image tagged with the build number, runs the tests inside that image, deploys the container on port 8081 and finally checks that the application answers over HTTP.</p>
+<p>Workflow: <b>GitHub &rarr; Jenkins Pipeline &rarr; Docker Image &rarr; Docker Container &rarr; Flask Application</b></p>
+
+<h2>2. The application</h2>
+<p>The Flask app (<i>app.py</i>) exposes two routes: <code>/</code> shows the title and the version (environment variable APP_VERSION, set to the Jenkins build number), and <code>/health</code> returns <code>{"status":"ok"}</code>. Two pytest tests (<i>tests/test_app.py</i>) check both routes. The Dockerfile (python:3.12-slim) installs the dependencies, copies the app and tests, and starts the app with gunicorn on port 8000. Inside the container the app listens on 8000; Docker maps it to port 8081 of the host.</p>
+
+<h2>3. The pipeline stages</h2>
+<table><tr><th>Stage</th><th>Command</th><th>Result</th></tr>
+<tr><td>Checkout</td><td>Done by Jenkins (Pipeline script from SCM); stage only echoes a message</td><td>Source and Jenkinsfile in the workspace</td></tr>
+<tr><td>Build</td><td>docker build -t jenkins-flask-lab:BUILD_NUMBER .</td><td>Tagged image created</td></tr>
+<tr><td>Test</td><td>docker run --rm jenkins-flask-lab:BUILD_NUMBER python -m pytest -v</td><td>Tests pass, otherwise the pipeline stops</td></tr>
+<tr><td>Deploy</td><td>docker rm -f jenkins-flask-app || true; docker run -d --name jenkins-flask-app -p 8081:8000 -e APP_VERSION=BUILD_NUMBER image</td><td>Old container replaced by the new one</td></tr>
+<tr><td>Verify</td><td>curl --fail --retry 10 --retry-delay 2 http://localhost:8081/health ; curl --fail http://localhost:8081/</td><td>Application answers HTTP 200</td></tr></table>
+<p><b>Jenkins job configuration:</b> New Item &rarr; name jenkins-flask-lab &rarr; Pipeline &rarr; Definition "Pipeline script from SCM" &rarr; SCM Git &rarr; repository URL &rarr; branch */main &rarr; Script Path Jenkinsfile &rarr; Save &rarr; Build Now.</p>
+<p><b>Correction to the lab handout:</b> in the PDF the Jenkinsfile variables were garbled by the export (e.g. "IMAGE_NAME:{BUILD_NUMBER}"); the correct form is <code>${IMAGE_NAME}:${BUILD_NUMBER}</code> and <code>-p ${APP_PORT}:8000 -e APP_VERSION=${BUILD_NUMBER}</code>. Also, the test command was changed from <code>pytest -v</code> to <code>python -m pytest -v</code>: with plain <code>pytest</code> the working directory is not on Python's import path and the test fails with <i>ModuleNotFoundError: No module named 'app'</i> (observed when running the image). <code>python -m pytest</code> adds the current directory to the path.</p>
+
+<h2>4. Successful run</h2>
+<p>All five stages succeed and the pipeline reports SUCCESS. Test output (same command as the Test stage):</p>
+<pre>============================= test session starts ==============================
+platform linux -- Python 3.12.16, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /app
+collecting ... collected 2 items
+
+tests/test_app.py::test_home PASSED                                      [ 50%]
+tests/test_app.py::test_health PASSED                                    [100%]
+
+============================== 2 passed in 0.12s ===============================
+</pre>
+<p>Verify output: <code>{"status":"ok"}</code> and <code>&lt;h1&gt;Jenkins CI/CD Lab&lt;/h1&gt;&lt;p&gt;Version: 1&lt;/p&gt;</code></p>
+<div class="ph">[SCREENSHOT 1 - Successful Jenkins pipeline (Stage View, all green)]</div><br>
+<div class="ph">[SCREENSHOT 2 - Application in the browser at http://localhost:8081]</div>
+
+<h2>5. Failure experiment</h2>
+<p>The assertion in test_health was changed to <code>{"status": "incorrect"}</code>, committed and pushed. Output of the Test stage:</p>
+<pre>============================= test session starts ==============================
+platform linux -- Python 3.12.16, pytest-9.2.0, pluggy-1.7.0 -- /usr/local/bin/python
+cachedir: .pytest_cache
+rootdir: /app
+collecting ... collected 2 items
+
+tests/test_app.py::test_home PASSED                                      [ 50%]
+tests/test_app.py::test_health FAILED                                    [100%]
+
+=================================== FAILURES ===================================
+_________________________________ test_health __________________________________
+
+    def test_health():
+        response = app.test_client().get(&quot;/health&quot;)
+        assert response.status_code == 200
+&gt;       assert response.get_json() == {&quot;status&quot;: &quot;incorrect&quot;}
+E       AssertionError: assert {&#39;status&#39;: &#39;ok&#39;} == {&#39;status&#39;: &#39;incorrect&#39;}
+E         
+E         Differing items:
+E         {&#39;status&#39;: &#39;ok&#39;} != {&#39;status&#39;: &#39;incorrect&#39;}
+E         
+E         Full diff: (-: missing in left side, +: extra in left side)
+E           {
+E         -     &#39;status&#39;: &#39;incorrect&#39;,...
+E         
+E         ...Full output truncated, use &#39;-vv&#39; to show
+
+tests/test_app.py:13: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_app.py::test_health - AssertionError: assert {&#39;status&#39;: &#39;ok...
+========================= 1 failed, 1 passed in 0.15s ==========================
+</pre>
+<div class="ph">[SCREENSHOT 3 - Failed Test stage in Jenkins (red Test stage, Deploy and Verify skipped)]</div>
+<p><b>Why deployment did not occur:</b> pytest exited with a non-zero code, so the <code>sh</code> step failed, the Test stage failed and Jenkins aborted the pipeline. Deploy and Verify were never executed, so the running container (previous good version) was not removed or replaced. The post "failure" block printed the failure message. After restoring the assertion to <code>{"status": "ok"}</code> and pushing, the next build succeeded.</p>
+
+<h2>6. Answers - Blue-Green deployment (Section 19)</h2>
+<ol>
+<li><b>Deployment vs release:</b> deployment puts a version on infrastructure (technical action); release makes it available to users (business decision). A version can be deployed without being released.</li>
+<li><b>Why deploy to Green first:</b> to test and validate the new version in a production-like environment without exposing users to possible bugs.</li>
+<li><b>Routing component:</b> a reverse proxy / load balancer such as NGINX.</li>
+<li><b>Why keep Blue:</b> so traffic can be switched back immediately if Green shows problems.</li>
+<li><b>Jenkins automation:</b> a pipeline with stages Build, Test, Deploy Green, Validate (smoke tests), an <code>input</code> step for manual approval, then a stage that updates the proxy configuration to switch traffic.</li>
+<li><b>Main benefit of rollback:</b> fast, low-risk recovery with minimal downtime, since the previous version is still running.</li>
+</ol>
+
+<h2>7. Answers - Questions (Section 20)</h2>
+<ol>
+<li><b>Jenkins:</b> an open-source automation server for CI/CD. It removes manual, error-prone build/test/deploy work by running them automatically and consistently.</li>
+<li><b>Jenkinsfile:</b> a text file stored with the code that defines the pipeline as code (versioned, reviewable, reproducible).</li>
+<li><b>CI vs CD:</b> Continuous Integration automatically builds and tests every change merged into the shared repository. Continuous Delivery keeps the software always in a deployable state and automates delivery to environments, with release usually triggered by a (manual) approval.</li>
+<li><b>GitHub:</b> hosts the source code and the Jenkinsfile; Jenkins clones it for every build and it provides version history.</li>
+<li><b>Docker:</b> packages the app and its dependencies in an identical, isolated environment, so build, test and run behave the same everywhere; images are tagged per build.</li>
+<li><b>Tests before deployment:</b> to detect defects early and stop broken versions from reaching the running application.</li>
+<li><b>Failed stage:</b> the pipeline stops, the build is marked FAILED, later stages are skipped and the post-failure actions run.</li>
+<li><b>Verify stage:</b> confirms that the deployed container actually runs and answers HTTP requests (/health and /), i.e. that the deployment really works.</li>
+<li><b>Credentials in a Jenkinsfile:</b> the file is in the repository, so passwords/tokens would be exposed to everyone with access and kept in history. They must be stored in the Jenkins Credentials store and referenced by ID.</li>
+</ol>
+
+<h2>8. Conclusion</h2>
+<p>The pipeline automates the full path from commit to a verified running container, and the failure experiment shows that the Test stage acts as a quality gate protecting the deployed version. Security note: giving Jenkins access to Docker is equivalent to broad control of the host, so it should only be done on an isolated lab machine.</p>
+</body></html>
