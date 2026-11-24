@@ -5,6 +5,7 @@ pipeline {
         IMAGE_NAME     = 'jenkins-flask-lab'
         CONTAINER_NAME = 'jenkins-flask-app'
         APP_PORT       = '8081'
+        VERIFY_HOST    = 'host.docker.internal'
     }
 
     stages {
@@ -37,8 +38,8 @@ pipeline {
 
         stage('Verify') {
             steps {
-                sh 'curl --fail --retry 10 --retry-delay 2 http://localhost:${APP_PORT}/health'
-                sh 'curl --fail http://localhost:${APP_PORT}/'
+                sh 'curl --fail --retry 10 --retry-delay 2 http://${VERIFY_HOST}:${APP_PORT}/health'
+                sh 'curl --fail http://${VERIFY_HOST}:${APP_PORT}/'
             }
         }
     }
@@ -52,4 +53,5 @@ pipeline {
         }
     }
 }
+
 
